@@ -1,18 +1,32 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
+import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { Toast } from '@/components/ui/toast';
+import { AppStateProvider } from '@/context/app-state';
 
 SplashScreen.preventAutoHideAsync();
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+export default function RootLayout() {
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <AppStateProvider>
       <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="sign-in" />
+        <Stack.Screen name="sign-up" />
+        <Stack.Screen name="forgot-password" />
+        <Stack.Screen name="onboarding-1" />
+        <Stack.Screen name="onboarding-2" />
+        <Stack.Screen name="onboarding-3" />
+        <Stack.Screen name="onboarding-4" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="scan" options={{ presentation: 'fullScreenModal', animation: 'slide_from_bottom' }} />
+        <Stack.Screen name="day-detail" options={{ presentation: 'transparentModal', animation: 'fade' }} />
+        <Stack.Screen name="food-detail" options={{ presentation: 'transparentModal', animation: 'fade' }} />
+        <Stack.Screen name="change-password" options={{ presentation: 'transparentModal', animation: 'fade' }} />
+      </Stack>
+      <Toast />
+    </AppStateProvider>
   );
 }
