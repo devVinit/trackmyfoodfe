@@ -2,16 +2,41 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 
+import { ApiError } from '@/api/auth';
 import { AppBackground } from '@/components/ui/app-background';
 import { GlassCard } from '@/components/ui/glass-card';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { TextButton } from '@/components/ui/text-button';
 import { TextField } from '@/components/ui/text-field';
 import { Brand } from '@/constants/theme';
+import { useAppState } from '@/context/app-state';
 
 export default function ForgotPasswordScreen() {
+  const { requestPasswordReset } = useAppState();
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSend() {
+    if (submitting) return;
+    if (!email.trim()) {
+      setError('Enter your email.');
+      return;
+    }
+    setError('');
+    setSubmitting(true);
+    try {
+      await requestPasswordReset(email.trim());
+      setSent(true);
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.message : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <AppBackground>
@@ -23,7 +48,8 @@ export default function ForgotPasswordScreen() {
           {!sent ? (
             <View style={styles.form}>
               <TextField value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address" />
-              <PrimaryButton onPress={() => setSent(true)} style={styles.submit}>
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+              <PrimaryButton onPress={handleSend} loading={submitting} style={styles.submit}>
                 Send reset link
               </PrimaryButton>
             </View>
@@ -69,6 +95,12 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: 12,
+  },
+  error: {
+    fontSize: 13.5,
+    color: Brand.danger,
+    fontWeight: '600',
+    paddingHorizontal: 4,
   },
   submit: {
     marginTop: 6,

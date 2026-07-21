@@ -2,16 +2,49 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 
+import { ApiError } from '@/api/auth';
 import { AppBackground } from '@/components/ui/app-background';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { TextButton } from '@/components/ui/text-button';
 import { TextField } from '@/components/ui/text-field';
 import { Brand } from '@/constants/theme';
+import { useAppState } from '@/context/app-state';
 
 export default function SignUpScreen() {
+  const { signUp } = useAppState();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSignUp() {
+    if (submitting) return;
+    if (!email.trim() || !password) {
+      setError('Enter your email and a password.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (password !== confirm) {
+      setError('Passwords do not match.');
+      return;
+    }
+    setError('');
+    setSubmitting(true);
+    try {
+      await signUp(email.trim(), password, confirm);
+      router.replace('/onboarding-1');
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.message : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <AppBackground>
@@ -24,7 +57,8 @@ export default function SignUpScreen() {
             <TextField value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address" />
             <TextField value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry />
             <TextField value={confirm} onChangeText={setConfirm} placeholder="Confirm password" secureTextEntry />
-            <PrimaryButton onPress={() => router.push('/onboarding-1')} style={styles.submit}>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            <PrimaryButton onPress={handleSignUp} loading={submitting} style={styles.submit}>
               Continue
             </PrimaryButton>
           </View>
@@ -63,6 +97,12 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: 12,
+  },
+  error: {
+    fontSize: 13.5,
+    color: Brand.danger,
+    fontWeight: '600',
+    paddingHorizontal: 4,
   },
   submit: {
     marginTop: 6,

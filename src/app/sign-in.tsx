@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 
+import { ApiError } from '@/api/auth';
 import { AppBackground } from '@/components/ui/app-background';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { TextButton } from '@/components/ui/text-button';
@@ -11,13 +12,30 @@ import { Brand } from '@/constants/theme';
 import { useAppState } from '@/context/app-state';
 
 export default function SignInScreen() {
-  const { completeAuthAsSignedIn } = useAppState();
+  const { signIn } = useAppState();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleSignIn() {
-    completeAuthAsSignedIn();
-    router.replace('/(tabs)/home');
+  async function handleSignIn() {
+    if (submitting) return;
+    if (!email.trim() || !password) {
+      setError('Enter your email and password.');
+      return;
+    }
+    setError('');
+    setSubmitting(true);
+    try {
+      await signIn(email.trim(), password);
+      router.replace('/(tabs)/home');
+    } catch (e) {
+      setError(
+        e instanceof ApiError ? e.message : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -38,7 +56,8 @@ export default function SignInScreen() {
           <View style={styles.form}>
             <TextField value={email} onChangeText={setEmail} placeholder="Email" keyboardType="email-address" />
             <TextField value={password} onChangeText={setPassword} placeholder="Password" secureTextEntry />
-            <PrimaryButton onPress={handleSignIn} style={styles.submit}>
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            <PrimaryButton onPress={handleSignIn} loading={submitting} style={styles.submit}>
               Sign In
             </PrimaryButton>
           </View>
@@ -117,6 +136,12 @@ const styles = StyleSheet.create({
   },
   form: {
     gap: 12,
+  },
+  error: {
+    fontSize: 13.5,
+    color: Brand.danger,
+    fontWeight: '600',
+    paddingHorizontal: 4,
   },
   submit: {
     marginTop: 6,

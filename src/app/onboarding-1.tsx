@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { ActivityDropdown } from '@/components/ui/activity-dropdown';
 import { AppBackground } from '@/components/ui/app-background';
 import { GenderToggle } from '@/components/ui/gender-toggle';
 import { LabeledField } from '@/components/ui/labeled-field';
@@ -29,6 +30,10 @@ export default function OnboardingPersonalInfoScreen() {
           <View style={styles.genderField}>
             <Text style={styles.genderLabel}>Gender</Text>
             <GenderToggle value={user.gender} onChange={(g) => updateUser({ gender: g })} />
+          </View>
+          <View style={styles.genderField}>
+            <Text style={styles.genderLabel}>Activity level</Text>
+            <ActivityDropdown value={user.activity} onChange={(a) => updateUser({ activity: a })} />
           </View>
         </View>
 

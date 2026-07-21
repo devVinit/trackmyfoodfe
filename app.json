@@ -38,7 +38,8 @@
         {
           "cameraPermission": "TrackMyFood uses the camera to scan your meals and estimate macros."
         }
-      ]
+      ],
+      "expo-secure-store"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,9 +1,21 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+
+import * as authApi from '@/api/auth';
+import { clearTokens, loadTokens } from '@/api/token-storage';
 
 export type Gender = 'male' | 'female';
 export type Meal = 'Breakfast' | 'Lunch' | 'Dinner' | 'Snack';
 export type GoalsSource = 'calc' | 'bca';
 export type HealthProvider = 'apple' | 'google';
+export type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'very';
+
+/** TDEE multipliers applied to BMR, keyed by activity level. */
+export const ACTIVITY_FACTORS: Record<ActivityLevel, number> = {
+  sedentary: 1.2,
+  light: 1.375,
+  moderate: 1.55,
+  very: 1.725,
+};
 
 export type UserProfile = {
   name: string;
@@ -11,6 +23,7 @@ export type UserProfile = {
   height: string;
   weight: string;
   gender: Gender;
+  activity: ActivityLevel;
 };
 
 export type Goals = {
@@ -71,7 +84,7 @@ function mealGradient(meal: Meal): readonly [string, string] {
   }
 }
 
-const INITIAL_USER: UserProfile = { name: 'Alex Rivera', age: '28', height: '175', weight: '70', gender: 'male' };
+const INITIAL_USER: UserProfile = { name: 'Alex Rivera', age: '28', height: '175', weight: '70', gender: 'male', activity: 'light' };
 
 const INITIAL_GOALS: Goals = { calories: 2280, protein: 171, fat: 63, carbs: 228, fiber: 30 };
 
@@ -136,7 +149,7 @@ export function calcGoals(user: UserProfile): Goals {
   const h = parseFloat(user.height) || 175;
   const a = parseFloat(user.age) || 28;
   const bmr = user.gender === 'male' ? 10 * w + 6.25 * h - 5 * a + 5 : 10 * w + 6.25 * h - 5 * a - 161;
-  const tdee = Math.round((bmr * 1.375) / 10) * 10;
+  const tdee = Math.round((bmr * ACTIVITY_FACTORS[user.activity]) / 10) * 10;
   return {
     calories: tdee,
     protein: Math.round((tdee * 0.3) / 4),
@@ -153,10 +166,14 @@ function nextId() {
 }
 
 type AppState = {
+  /** False until the persisted session has been restored on app launch. */
+  authReady: boolean;
   isSignedIn: boolean;
-  signIn: () => void;
-  signUp: () => void;
-  completeAuthAsSignedIn: () => void;
+  /** Signed-in user's account (id/email) from the backend, once known. */
+  account: authApi.AuthUser | null;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string, confirmPassword: string) => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
   logout: () => void;
   deleteAccount: () => void;
 
@@ -190,7 +207,9 @@ type AppState = {
 const AppStateContext = createContext<AppState | null>(null);
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
+  const [authReady, setAuthReady] = useState(false);
   const [isSignedIn, setIsSignedIn] = useState(false);
+  const [account, setAccount] = useState<authApi.AuthUser | null>(null);
   const [user, setUser] = useState<UserProfile>(INITIAL_USER);
   const [goals, setGoalsState] = useState<Goals>(INITIAL_GOALS);
   const [goalsSource, setGoalsSource] = useState<GoalsSource>('calc');
@@ -256,13 +275,53 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }, 1800);
   }, [showToast]);
 
-  const signIn = useCallback(() => setIsSignedIn(true), []);
-  const signUp = useCallback(() => {}, []);
-  const completeAuthAsSignedIn = useCallback(() => setIsSignedIn(true), []);
-  const logout = useCallback(() => {
-    setIsSignedIn(false);
+  // Restore a persisted session on launch: if tokens exist, validate them
+  // against the backend before treating the user as signed in.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const tokens = await loadTokens();
+        if (!tokens) return;
+        const acct = await authApi.me();
+        if (!cancelled) {
+          setAccount(acct);
+          setIsSignedIn(true);
+        }
+      } catch {
+        await clearTokens();
+      } finally {
+        if (!cancelled) setAuthReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
-  const deleteAccount = useCallback(() => {
+
+  const signIn = useCallback(async (email: string, password: string) => {
+    await authApi.signin(email, password);
+    const acct = await authApi.me();
+    setAccount(acct);
+    setIsSignedIn(true);
+  }, []);
+
+  const signUp = useCallback(
+    async (email: string, password: string, confirmPassword: string) => {
+      await authApi.signup(email, password, confirmPassword);
+      const acct = await authApi.me();
+      setAccount(acct);
+      setIsSignedIn(true);
+    },
+    [],
+  );
+
+  const requestPasswordReset = useCallback(async (email: string) => {
+    await authApi.forgotPassword(email);
+  }, []);
+
+  const resetLocalState = useCallback(() => {
+    setAccount(null);
     setIsSignedIn(false);
     setUser(INITIAL_USER);
     setGoalsState(INITIAL_GOALS);
@@ -271,12 +330,26 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setHealthProvider(null);
   }, []);
 
+  const logout = useCallback(() => {
+    void clearTokens();
+    resetLocalState();
+  }, [resetLocalState]);
+
+  // No account-deletion endpoint on the backend yet — clear the local session
+  // and tokens so the user is fully signed out.
+  const deleteAccount = useCallback(() => {
+    void clearTokens();
+    resetLocalState();
+  }, [resetLocalState]);
+
   const value = useMemo<AppState>(
     () => ({
+      authReady,
       isSignedIn,
+      account,
       signIn,
       signUp,
-      completeAuthAsSignedIn,
+      requestPasswordReset,
       logout,
       deleteAccount,
       user,
@@ -300,10 +373,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       showToast,
     }),
     [
+      authReady,
       isSignedIn,
+      account,
       signIn,
       signUp,
-      completeAuthAsSignedIn,
+      requestPasswordReset,
       logout,
       deleteAccount,
       user,
