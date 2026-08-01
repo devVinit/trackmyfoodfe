@@ -3,6 +3,8 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { scanBcaReport } from '@/api/bca';
+import { ApiError } from '@/api/auth';
 import { AppBackground } from '@/components/ui/app-background';
 import { GlassCard } from '@/components/ui/glass-card';
 import { ProgressDots } from '@/components/ui/progress-dots';
@@ -11,8 +13,17 @@ import { TextButton } from '@/components/ui/text-button';
 import { Brand } from '@/constants/theme';
 import { useAppState } from '@/context/app-state';
 
+function formatReportDate(isoDate: string) {
+  return new Date(isoDate).toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric',
+  });
+}
+
 export default function OnboardingBcaUploadScreen() {
-  const { user, applyBcaGoals, applyCalculatedGoals, addReport } = useAppState();
+  const { user, applyBcaGoals, applyCalculatedGoals, addReport, showToast, advanceOnboarding } =
+    useAppState();
   const [parsing, setParsing] = useState(false);
 
   async function handleUpload() {
@@ -20,19 +31,47 @@ export default function OnboardingBcaUploadScreen() {
       type: ['image/jpeg', 'image/png', 'application/pdf'],
     });
     if (result.canceled) return;
+    const asset = result.assets[0];
 
     setParsing(true);
-    setTimeout(() => {
-      const today = new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
-      applyBcaGoals();
-      addReport({ date: today, weight: user.weight || '70', fat: '18.2', muscle: '33.1', bmr: '1,655' });
-      setParsing(false);
+    try {
+      const scan = await scanBcaReport(
+        {
+          uri: asset.uri,
+          name: asset.name,
+          mimeType: asset.mimeType ?? 'application/pdf',
+          webFile: asset.file,
+        },
+        user.activity,
+        user.gender,
+      );
+      applyBcaGoals({
+        calories: scan.goals.calories,
+        protein: scan.goals.protein_g,
+        fat: scan.goals.fat_g,
+        carbs: scan.goals.carbs_g,
+        fiber: scan.goals.fiber_g,
+      });
+      addReport({
+        date: formatReportDate(scan.report.report_date),
+        weight: String(scan.report.weight_kg),
+        fat: scan.report.body_fat_pct.toFixed(1),
+        muscle: scan.report.muscle_mass_kg.toFixed(1),
+        bmr: scan.report.bmr_kcal.toLocaleString('en-US'),
+      });
+      void advanceOnboarding(3);
       router.push('/onboarding-3');
-    }, 1800);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Could not read that file. Try again?';
+      showToast(message);
+    } finally {
+      setParsing(false);
+    }
   }
 
   function handleSkip() {
     applyCalculatedGoals();
+    void advanceOnboarding(3);
     router.push('/onboarding-3');
   }
 

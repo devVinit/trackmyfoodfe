@@ -7,22 +7,36 @@ import { LabeledField } from '@/components/ui/labeled-field';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { ProgressDots } from '@/components/ui/progress-dots';
 import { Brand } from '@/constants/theme';
-import { useAppState, type Goals } from '@/context/app-state';
+import { useAppState, type ActivityLevel, type Goals } from '@/context/app-state';
 
 function parseGoalNumber(text: string) {
   const v = parseInt(text.replace(/[^0-9]/g, ''), 10);
   return Number.isNaN(v) ? 0 : v;
 }
 
+const ACTIVITY_SHORT_LABELS: Record<ActivityLevel, string> = {
+  sedentary: 'sedentary',
+  light: 'lightly active',
+  moderate: 'moderately active',
+  very: 'very active',
+};
+
 export default function OnboardingConfirmGoalsScreen() {
-  const { goals, setGoals, goalsSource } = useAppState();
+  const { goals, setGoals, goalsSource, user, advanceOnboarding } = useAppState();
 
   function setField(key: keyof Goals) {
     return (text: string) => setGoals({ ...goals, [key]: parseGoalNumber(text) });
   }
 
+  function handleContinue() {
+    void advanceOnboarding(4);
+    router.push('/onboarding-4');
+  }
+
   const sourceLabel =
-    goalsSource === 'bca' ? 'Parsed by AI from your BCA report' : 'Calculated · Mifflin-St Jeor · lightly active';
+    goalsSource === 'bca'
+      ? 'Parsed by AI from your BCA report'
+      : `Calculated · Mifflin-St Jeor · ${ACTIVITY_SHORT_LABELS[user.activity]}`;
 
   return (
     <AppBackground>
@@ -53,7 +67,7 @@ export default function OnboardingConfirmGoalsScreen() {
 
         <Text style={styles.footnote}>You can change these anytime from your profile.</Text>
 
-        <PrimaryButton onPress={() => router.push('/onboarding-4')} style={styles.continue}>
+        <PrimaryButton onPress={handleContinue} style={styles.continue}>
           Continue
         </PrimaryButton>
       </ScrollView>

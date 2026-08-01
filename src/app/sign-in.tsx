@@ -28,7 +28,9 @@ export default function SignInScreen() {
     setSubmitting(true);
     try {
       await signIn(email.trim(), password);
-      router.replace('/(tabs)/home');
+      // Let index.tsx decide: home if fully onboarded, otherwise the
+      // saved onboarding step so a ditched signup resumes where it left off.
+      router.replace('/');
     } catch (e) {
       setError(
         e instanceof ApiError ? e.message : 'Something went wrong. Please try again.',

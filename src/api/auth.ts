@@ -11,6 +11,8 @@ export type TokenPair = {
 export type AuthUser = {
   id: number;
   email: string;
+  is_onboarded: boolean;
+  onboarding_step: number;
 };
 
 /** Error thrown for any non-2xx backend response, carrying the HTTP status. */
@@ -36,7 +38,7 @@ function messageFromDetail(detail: unknown, fallback: string): string {
   return fallback;
 }
 
-async function parseError(res: Response): Promise<ApiError> {
+export async function parseError(res: Response): Promise<ApiError> {
   let detail: unknown;
   try {
     detail = (await res.json())?.detail;
@@ -46,7 +48,7 @@ async function parseError(res: Response): Promise<ApiError> {
   return new ApiError(messageFromDetail(detail, `Request failed (${res.status})`), res.status);
 }
 
-async function request<T>(
+export async function request<T>(
   path: string,
   init: RequestInit & { auth?: boolean } = {},
 ): Promise<T> {

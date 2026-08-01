@@ -9,7 +9,7 @@ import { Brand } from '@/constants/theme';
 import { useAppState, type HealthProvider } from '@/context/app-state';
 
 export default function OnboardingHealthSyncScreen() {
-  const { healthProvider, setHealthProvider, showToast } = useAppState();
+  const { healthProvider, setHealthProvider, showToast, finishOnboarding } = useAppState();
 
   function toggle(provider: HealthProvider) {
     setHealthProvider(healthProvider === provider ? null : provider);
@@ -19,11 +19,13 @@ export default function OnboardingHealthSyncScreen() {
     if (healthProvider) {
       showToast(`Synced with ${healthProvider === 'apple' ? 'Apple Health' : 'Health Connect'}`);
     }
+    void finishOnboarding();
     router.replace('/(tabs)/home');
   }
 
   function skip() {
     setHealthProvider(null);
+    void finishOnboarding();
     router.replace('/(tabs)/home');
   }
 

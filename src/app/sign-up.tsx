@@ -36,7 +36,9 @@ export default function SignUpScreen() {
     setSubmitting(true);
     try {
       await signUp(email.trim(), password, confirm);
-      router.replace('/onboarding-1');
+      // A fresh account always starts at onboarding step 1 — let index.tsx
+      // make that call from the account it just fetched.
+      router.replace('/');
     } catch (e) {
       setError(
         e instanceof ApiError ? e.message : 'Something went wrong. Please try again.',

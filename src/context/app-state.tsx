@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import * as authApi from '@/api/auth';
 import { clearTokens, loadTokens } from '@/api/token-storage';
+import * as usersApi from '@/api/users';
 
 export type Gender = 'male' | 'female';
 export type Meal = 'Breakfast' | 'Lunch' | 'Dinner' | 'Snack';
@@ -84,7 +85,7 @@ function mealGradient(meal: Meal): readonly [string, string] {
   }
 }
 
-const INITIAL_USER: UserProfile = { name: 'Alex Rivera', age: '28', height: '175', weight: '70', gender: 'male', activity: 'light' };
+const INITIAL_USER: UserProfile = { name: '', age: '', height: '', weight: '', gender: 'male', activity: 'light' };
 
 const INITIAL_GOALS: Goals = { calories: 2280, protein: 171, fat: 63, carbs: 228, fiber: 30 };
 
@@ -124,10 +125,7 @@ const INITIAL_HISTORY: HistoryDay[] = [
   { date: 'Sun, Jul 6', cal: 2295, p: 169, f: 66, c: 235, fi: 28 },
 ];
 
-const INITIAL_REPORTS: BcaReport[] = [
-  { date: 'Jun 02, 2026', weight: '70.4', fat: '18.2', muscle: '33.1', bmr: '1,655' },
-  { date: 'Mar 15, 2026', weight: '72.8', fat: '20.6', muscle: '32.4', bmr: '1,640' },
-];
+const INITIAL_REPORTS: BcaReport[] = [];
 
 export function historyDayMeals(day: HistoryDay, index: number) {
   const set = MEAL_SETS[index % MEAL_SETS.length];
@@ -176,6 +174,10 @@ type AppState = {
   requestPasswordReset: (email: string) => Promise<void>;
   logout: () => void;
   deleteAccount: () => void;
+  /** Persists which onboarding screen the user has reached, so a later sign-in resumes here. */
+  advanceOnboarding: (step: number) => Promise<void>;
+  /** Marks onboarding as finished — future sign-ins land on the home tab. */
+  finishOnboarding: () => Promise<void>;
 
   user: UserProfile;
   updateUser: (patch: Partial<UserProfile>) => void;
@@ -184,7 +186,7 @@ type AppState = {
   goalsSource: GoalsSource;
   setGoals: (goals: Goals) => void;
   applyCalculatedGoals: () => void;
-  applyBcaGoals: () => void;
+  applyBcaGoals: (goals: Goals) => void;
 
   healthProvider: HealthProvider | null;
   setHealthProvider: (p: HealthProvider | null) => void;
@@ -238,9 +240,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setGoalsState((_) => calcGoals(user));
   }, [user]);
 
-  const applyBcaGoals = useCallback(() => {
+  const applyBcaGoals = useCallback((next: Goals) => {
     setGoalsSource('bca');
-    setGoalsState({ calories: 2150, protein: 165, fat: 60, carbs: 210, fiber: 32 });
+    setGoalsState(next);
   }, []);
 
   const addLogEntry = useCallback((entry: Omit<LogEntry, 'id' | 'gradient'>) => {
@@ -320,6 +322,26 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     await authApi.forgotPassword(email);
   }, []);
 
+  // Best-effort: a failed write here just means a later sign-in resumes a
+  // step earlier than expected, which is safe, so navigation never blocks on it.
+  const advanceOnboarding = useCallback(async (step: number) => {
+    try {
+      await usersApi.setOnboardingStep(step);
+      setAccount((prev) => (prev ? { ...prev, onboarding_step: step } : prev));
+    } catch {
+      // Ignored — see comment above.
+    }
+  }, []);
+
+  const finishOnboarding = useCallback(async () => {
+    try {
+      await usersApi.completeOnboarding();
+      setAccount((prev) => (prev ? { ...prev, is_onboarded: true } : prev));
+    } catch {
+      // Ignored — see comment above.
+    }
+  }, []);
+
   const resetLocalState = useCallback(() => {
     setAccount(null);
     setIsSignedIn(false);
@@ -352,6 +374,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       requestPasswordReset,
       logout,
       deleteAccount,
+      advanceOnboarding,
+      finishOnboarding,
       user,
       updateUser,
       goals,
@@ -381,6 +405,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       requestPasswordReset,
       logout,
       deleteAccount,
+      advanceOnboarding,
+      finishOnboarding,
       user,
       updateUser,
       goals,

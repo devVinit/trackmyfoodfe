@@ -11,7 +11,12 @@ import { Brand } from '@/constants/theme';
 import { useAppState } from '@/context/app-state';
 
 export default function OnboardingPersonalInfoScreen() {
-  const { user, updateUser } = useAppState();
+  const { user, updateUser, advanceOnboarding } = useAppState();
+
+  function handleContinue() {
+    void advanceOnboarding(2);
+    router.push('/onboarding-2');
+  }
 
   return (
     <AppBackground>
@@ -37,7 +42,7 @@ export default function OnboardingPersonalInfoScreen() {
           </View>
         </View>
 
-        <PrimaryButton onPress={() => router.push('/onboarding-2')} style={styles.continue}>
+        <PrimaryButton onPress={handleContinue} style={styles.continue}>
           Continue
         </PrimaryButton>
       </ScrollView>
