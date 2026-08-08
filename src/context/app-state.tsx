@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import * as authApi from '@/api/auth';
+import { ApiError } from '@/api/auth';
+import * as bcaApi from '@/api/bca';
+import * as foodLogsApi from '@/api/food-logs';
 import { clearTokens, loadTokens } from '@/api/token-storage';
 import * as usersApi from '@/api/users';
 
@@ -46,10 +49,28 @@ export type LogEntry = {
   c: number;
   fi: number;
   gradient: readonly [string, string];
+  /** Presigned S3 URL of the logged photo, if any — null falls back to the gradient thumbnail. */
+  photoUrl: string | null;
+};
+
+/** Fields needed to log a new entry — `photoKey` comes from a prior scanFoodPhoto() call. */
+export type NewLogEntry = {
+  name: string;
+  time: string;
+  meal: Meal;
+  cal: number;
+  p: number;
+  f: number;
+  c: number;
+  fi: number;
+  photoKey?: string;
 };
 
 export type HistoryDay = {
+  /** Display label, e.g. "Fri, Jul 11". */
   date: string;
+  /** ISO `YYYY-MM-DD`, used to fetch that day's entries. */
+  isoDate: string;
   cal: number;
   p: number;
   f: number;
@@ -58,6 +79,7 @@ export type HistoryDay = {
 };
 
 export type BcaReport = {
+  id: number;
   date: string;
   weight: string;
   fat: string;
@@ -85,61 +107,79 @@ function mealGradient(meal: Meal): readonly [string, string] {
   }
 }
 
+function mealToApi(meal: Meal): foodLogsApi.MealTypeApi {
+  return meal.toLowerCase() as foodLogsApi.MealTypeApi;
+}
+
+function mealFromApi(meal: foodLogsApi.MealTypeApi): Meal {
+  return (meal.charAt(0).toUpperCase() + meal.slice(1)) as Meal;
+}
+
 const INITIAL_USER: UserProfile = { name: '', age: '', height: '', weight: '', gender: 'male', activity: 'light' };
 
-const INITIAL_GOALS: Goals = { calories: 2280, protein: 171, fat: 63, carbs: 228, fiber: 30 };
+const INITIAL_GOALS: Goals = { calories: 2000, protein: 150, fat: 65, carbs: 200, fiber: 30 };
 
-const INITIAL_LOG: LogEntry[] = [
-  { id: 'seed-1', name: 'Greek yogurt bowl', time: '8:12 AM', meal: 'Breakfast', cal: 320, p: 24, f: 9, c: 38, fi: 4, gradient: GRADIENTS.breakfast },
-  { id: 'seed-2', name: 'Grilled chicken salad', time: '12:40 PM', meal: 'Lunch', cal: 465, p: 42, f: 18, c: 28, fi: 7, gradient: GRADIENTS.lunch },
-  { id: 'seed-3', name: 'Apple & almonds', time: '3:30 PM', meal: 'Snack', cal: 210, p: 5, f: 11, c: 24, fi: 5, gradient: GRADIENTS.snack },
-];
+function profileFromApi(p: usersApi.UserProfileApi): UserProfile {
+  return {
+    name: p.name ?? '',
+    age: p.age != null ? String(p.age) : '',
+    height: p.height_cm != null ? String(p.height_cm) : '',
+    weight: p.weight_kg != null ? String(p.weight_kg) : '',
+    gender: p.gender ?? 'male',
+    activity: p.activity_level ?? 'light',
+  };
+}
 
-const MEAL_SETS: [string, Meal, string, number][][] = [
-  [
-    ['Oat & berry bowl', 'Breakfast', '8:05 AM', 0.2],
-    ['Chicken burrito bowl', 'Lunch', '1:05 PM', 0.34],
-    ['Trail mix', 'Snack', '4:10 PM', 0.12],
-    ['Salmon & greens', 'Dinner', '7:45 PM', 0.34],
-  ],
-  [
-    ['Veggie omelette', 'Breakfast', '8:40 AM', 0.24],
-    ['Turkey sandwich', 'Lunch', '12:30 PM', 0.3],
-    ['Greek yogurt', 'Snack', '3:20 PM', 0.1],
-    ['Beef stir-fry', 'Dinner', '8:00 PM', 0.36],
-  ],
-  [
-    ['Smoothie bowl', 'Breakfast', '7:55 AM', 0.22],
-    ['Poke bowl', 'Lunch', '12:50 PM', 0.32],
-    ['Apple & almonds', 'Snack', '4:00 PM', 0.12],
-    ['Pasta primavera', 'Dinner', '7:30 PM', 0.34],
-  ],
-];
+export function goalsFromApi(g: { calories: number; protein_g: number; fat_g: number; carbs_g: number; fiber_g: number }): Goals {
+  return { calories: g.calories, protein: g.protein_g, fat: g.fat_g, carbs: g.carbs_g, fiber: g.fiber_g };
+}
 
-const INITIAL_HISTORY: HistoryDay[] = [
-  { date: 'Fri, Jul 11', cal: 2140, p: 168, f: 61, c: 224, fi: 29 },
-  { date: 'Thu, Jul 10', cal: 2410, p: 175, f: 71, c: 241, fi: 31 },
-  { date: 'Wed, Jul 9', cal: 1985, p: 150, f: 55, c: 205, fi: 26 },
-  { date: 'Tue, Jul 8', cal: 2255, p: 172, f: 62, c: 226, fi: 30 },
-  { date: 'Mon, Jul 7', cal: 1760, p: 128, f: 48, c: 178, fi: 22 },
-  { date: 'Sun, Jul 6', cal: 2295, p: 169, f: 66, c: 235, fi: 28 },
-];
-
-const INITIAL_REPORTS: BcaReport[] = [];
-
-export function historyDayMeals(day: HistoryDay, index: number) {
-  const set = MEAL_SETS[index % MEAL_SETS.length];
-  return set.map(([name, meal, time, ratio]) => ({
-    name,
+function logEntryFromApi(e: foodLogsApi.FoodLogEntryApi): LogEntry {
+  const meal = mealFromApi(e.meal_type);
+  return {
+    id: String(e.id),
+    name: e.name,
+    time: new Date(e.logged_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
     meal,
-    time,
+    cal: e.calories,
+    p: e.protein_g,
+    f: e.fat_g,
+    c: e.carbs_g,
+    fi: e.fiber_g,
     gradient: mealGradient(meal),
-    cal: Math.round(day.cal * ratio),
-    p: Math.round(day.p * ratio),
-    f: Math.round(day.f * ratio),
-    c: Math.round(day.c * ratio),
-    fi: Math.round(day.fi * ratio),
-  }));
+    photoUrl: e.photo_url,
+  };
+}
+
+function historyDayFromApi(d: foodLogsApi.DailyTotalApi): HistoryDay {
+  // log_date is a plain YYYY-MM-DD string — parse it as local, not UTC
+  // midnight, so the display label doesn't roll back a day near midnight.
+  const [y, m, day] = d.log_date.split('-').map(Number);
+  const dateObj = new Date(y, m - 1, day);
+  return {
+    date: dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+    isoDate: d.log_date,
+    cal: d.calories,
+    p: d.protein_g,
+    f: d.fat_g,
+    c: d.carbs_g,
+    fi: d.fiber_g,
+  };
+}
+
+function formatReportDate(isoDate: string) {
+  return new Date(isoDate).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+}
+
+export function reportFromApi(r: bcaApi.BcaReportListItem): BcaReport {
+  return {
+    id: r.id,
+    date: formatReportDate(r.report_date),
+    weight: String(r.weight_kg),
+    fat: r.body_fat_pct.toFixed(1),
+    muscle: r.muscle_mass_kg.toFixed(1),
+    bmr: r.bmr_kcal.toLocaleString('en-US'),
+  };
 }
 
 export function calcGoals(user: UserProfile): Goals {
@@ -157,12 +197,6 @@ export function calcGoals(user: UserProfile): Goals {
   };
 }
 
-let idSeq = 0;
-function nextId() {
-  idSeq += 1;
-  return `entry-${Date.now()}-${idSeq}`;
-}
-
 type AppState = {
   /** False until the persisted session has been restored on app launch. */
   authReady: boolean;
@@ -173,7 +207,7 @@ type AppState = {
   signUp: (email: string, password: string, confirmPassword: string) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
   logout: () => void;
-  deleteAccount: () => void;
+  deleteAccount: () => Promise<void>;
   /** Persists which onboarding screen the user has reached, so a later sign-in resumes here. */
   advanceOnboarding: (step: number) => Promise<void>;
   /** Marks onboarding as finished — future sign-ins land on the home tab. */
@@ -181,26 +215,34 @@ type AppState = {
 
   user: UserProfile;
   updateUser: (patch: Partial<UserProfile>) => void;
+  /** Persists the current `user` fields to the backend. Throws on failure. */
+  saveProfile: () => Promise<void>;
 
   goals: Goals;
   goalsSource: GoalsSource;
   setGoals: (goals: Goals) => void;
-  applyCalculatedGoals: () => void;
+  /** Persists the current `goals` fields to the backend. Throws on failure. */
+  saveGoals: () => Promise<void>;
+  applyCalculatedGoals: () => Promise<void>;
   applyBcaGoals: (goals: Goals) => void;
 
   healthProvider: HealthProvider | null;
   setHealthProvider: (p: HealthProvider | null) => void;
 
   todayLog: LogEntry[];
-  addLogEntry: (entry: Omit<LogEntry, 'id' | 'gradient'>) => void;
-  removeLogEntry: (id: string) => void;
+  addLogEntry: (entry: NewLogEntry) => Promise<void>;
+  removeLogEntry: (id: string) => Promise<void>;
+  /** Re-fetches today's log from the backend — call on screen focus so a
+   * change made elsewhere (e.g. the scan modal) is reflected immediately. */
+  refreshTodayLog: () => Promise<void>;
 
   history: HistoryDay[];
+  loadDayEntries: (isoDate: string) => Promise<LogEntry[]>;
 
   reports: BcaReport[];
   addReport: (report: BcaReport) => void;
   reanalysingIndex: number | null;
-  reanalyseReport: (index: number) => void;
+  reanalyseReport: (index: number) => Promise<void>;
 
   toast: string;
   showToast: (msg: string) => void;
@@ -216,9 +258,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [goals, setGoalsState] = useState<Goals>(INITIAL_GOALS);
   const [goalsSource, setGoalsSource] = useState<GoalsSource>('calc');
   const [healthProvider, setHealthProvider] = useState<HealthProvider | null>(null);
-  const [todayLog, setTodayLog] = useState<LogEntry[]>(INITIAL_LOG);
-  const [history] = useState<HistoryDay[]>(INITIAL_HISTORY);
-  const [reports, setReports] = useState<BcaReport[]>(INITIAL_REPORTS);
+  const [todayLog, setTodayLog] = useState<LogEntry[]>([]);
+  const [history, setHistory] = useState<HistoryDay[]>([]);
+  const [reports, setReports] = useState<BcaReport[]>([]);
   const [reanalysingIndex, setReanalysingIndex] = useState<number | null>(null);
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -235,47 +277,156 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const setGoals = useCallback((next: Goals) => setGoalsState(next), []);
 
-  const applyCalculatedGoals = useCallback(() => {
+  // Loads everything the home/history/profile tabs need. Best-effort: on
+  // failure the screens just keep showing defaults/empty state rather than
+  // blocking navigation — the user can retry by reopening the tab.
+  const loadUserData = useCallback(async () => {
+    try {
+      const [profile, goalsRes, logs, totals, reportsRes] = await Promise.all([
+        usersApi.getProfile(),
+        usersApi.getGoals(),
+        foodLogsApi.listFoodLogs(),
+        foodLogsApi.getDailyTotals(30),
+        bcaApi.listBcaReports(),
+      ]);
+      setUser(profileFromApi(profile));
+      setGoalsState(goalsFromApi(goalsRes));
+      setGoalsSource(goalsRes.goals_source);
+      setTodayLog(logs.map(logEntryFromApi));
+      setHistory(totals.map(historyDayFromApi));
+      setReports(reportsRes.map(reportFromApi));
+    } catch {
+      // See comment above.
+    }
+  }, []);
+
+  const saveProfile = useCallback(async () => {
+    const updated = await usersApi.updateProfile({
+      name: user.name || null,
+      age: user.age ? parseInt(user.age, 10) : null,
+      height_cm: user.height ? parseFloat(user.height) : null,
+      weight_kg: user.weight ? parseFloat(user.weight) : null,
+      gender: user.gender,
+      activity_level: user.activity,
+    });
+    setUser(profileFromApi(updated));
+  }, [user]);
+
+  const saveGoals = useCallback(async () => {
+    const updated = await usersApi.updateGoals({
+      calories: goals.calories,
+      protein_g: goals.protein,
+      fat_g: goals.fat,
+      carbs_g: goals.carbs,
+      fiber_g: goals.fiber,
+    });
+    setGoalsState(goalsFromApi(updated));
+    setGoalsSource(updated.goals_source);
+  }, [goals]);
+
+  const applyCalculatedGoals = useCallback(async () => {
+    const next = calcGoals(user);
     setGoalsSource('calc');
-    setGoalsState((_) => calcGoals(user));
+    setGoalsState(next);
+    try {
+      const updated = await usersApi.updateGoals({
+        calories: next.calories,
+        protein_g: next.protein,
+        fat_g: next.fat,
+        carbs_g: next.carbs,
+        fiber_g: next.fiber,
+      });
+      setGoalsState(goalsFromApi(updated));
+      setGoalsSource(updated.goals_source);
+    } catch {
+      // Best-effort — the locally calculated goals still apply this session;
+      // a later save/reload will retry persisting them.
+    }
   }, [user]);
 
   const applyBcaGoals = useCallback((next: Goals) => {
+    // The /bca-reports/scan call already persisted these goals server-side —
+    // this just syncs local state to match.
     setGoalsSource('bca');
     setGoalsState(next);
   }, []);
 
-  const addLogEntry = useCallback((entry: Omit<LogEntry, 'id' | 'gradient'>) => {
-    setTodayLog((prev) => [...prev, { ...entry, id: nextId(), gradient: mealGradient(entry.meal) }]);
+  const addLogEntry = useCallback(
+    async (entry: NewLogEntry) => {
+      try {
+        const created = await foodLogsApi.createFoodLog({
+          name: entry.name,
+          meal_type: mealToApi(entry.meal),
+          calories: entry.cal,
+          protein_g: entry.p,
+          fat_g: entry.f,
+          carbs_g: entry.c,
+          fiber_g: entry.fi,
+          photo_key: entry.photoKey,
+        });
+        setTodayLog((prev) => [...prev, logEntryFromApi(created)]);
+      } catch (err) {
+        showToast(err instanceof ApiError ? err.message : 'Could not save log entry');
+        throw err;
+      }
+    },
+    [showToast],
+  );
+
+  const removeLogEntry = useCallback(
+    async (id: string) => {
+      try {
+        await foodLogsApi.deleteFoodLog(Number(id));
+        setTodayLog((prev) => prev.filter((e) => e.id !== id));
+      } catch (err) {
+        showToast(err instanceof ApiError ? err.message : 'Could not remove entry');
+        throw err;
+      }
+    },
+    [showToast],
+  );
+
+  const loadDayEntries = useCallback(async (isoDate: string) => {
+    const entries = await foodLogsApi.listFoodLogs(isoDate);
+    return entries.map(logEntryFromApi);
   }, []);
 
-  const removeLogEntry = useCallback((id: string) => {
-    setTodayLog((prev) => prev.filter((e) => e.id !== id));
+  const refreshTodayLog = useCallback(async () => {
+    try {
+      const entries = await foodLogsApi.listFoodLogs();
+      setTodayLog(entries.map(logEntryFromApi));
+    } catch {
+      // Best-effort — keep showing whatever's already in state.
+    }
   }, []);
 
   const addReport = useCallback((report: BcaReport) => {
     setReports((prev) => [report, ...prev]);
   }, []);
 
-  const reanalyseReport = useCallback((index: number) => {
-    setReanalysingIndex((current) => (current !== null ? current : index));
-    setTimeout(() => {
-      setReports((prev) => {
-        const next = prev.slice();
-        const r = next[index];
-        if (r) {
-          next[index] = {
-            ...r,
-            fat: (parseFloat(r.fat) - 0.2).toFixed(1),
-            muscle: (parseFloat(r.muscle) + 0.1).toFixed(1),
-          };
-        }
-        return next;
-      });
-      setReanalysingIndex(null);
-      showToast('Report re-analysed by AI');
-    }, 1800);
-  }, [showToast]);
+  const reanalyseReport = useCallback(
+    async (index: number) => {
+      const report = reports[index];
+      if (!report || reanalysingIndex !== null) return;
+      setReanalysingIndex(index);
+      try {
+        const result = await bcaApi.reanalyseBcaReport(report.id);
+        setReports((prev) => {
+          const next = prev.slice();
+          next[index] = reportFromApi(result.report);
+          return next;
+        });
+        setGoalsState(goalsFromApi(result.goals));
+        setGoalsSource('bca');
+        showToast('Report re-analysed by AI');
+      } catch (err) {
+        showToast(err instanceof ApiError ? err.message : 'Could not re-analyse report');
+      } finally {
+        setReanalysingIndex(null);
+      }
+    },
+    [reports, reanalysingIndex, showToast],
+  );
 
   // Restore a persisted session on launch: if tokens exist, validate them
   // against the backend before treating the user as signed in.
@@ -289,6 +440,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           setAccount(acct);
           setIsSignedIn(true);
+          void loadUserData();
         }
       } catch {
         await clearTokens();
@@ -299,14 +451,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadUserData]);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    await authApi.signin(email, password);
-    const acct = await authApi.me();
-    setAccount(acct);
-    setIsSignedIn(true);
-  }, []);
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      await authApi.signin(email, password);
+      const acct = await authApi.me();
+      setAccount(acct);
+      setIsSignedIn(true);
+      void loadUserData();
+    },
+    [loadUserData],
+  );
 
   const signUp = useCallback(
     async (email: string, password: string, confirmPassword: string) => {
@@ -314,8 +470,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       const acct = await authApi.me();
       setAccount(acct);
       setIsSignedIn(true);
+      void loadUserData();
     },
-    [],
+    [loadUserData],
   );
 
   const requestPasswordReset = useCallback(async (email: string) => {
@@ -347,8 +504,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setIsSignedIn(false);
     setUser(INITIAL_USER);
     setGoalsState(INITIAL_GOALS);
-    setTodayLog(INITIAL_LOG);
-    setReports(INITIAL_REPORTS);
+    setGoalsSource('calc');
+    setTodayLog([]);
+    setHistory([]);
+    setReports([]);
     setHealthProvider(null);
   }, []);
 
@@ -357,10 +516,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     resetLocalState();
   }, [resetLocalState]);
 
-  // No account-deletion endpoint on the backend yet — clear the local session
-  // and tokens so the user is fully signed out.
-  const deleteAccount = useCallback(() => {
-    void clearTokens();
+  const deleteAccount = useCallback(async () => {
+    try {
+      await usersApi.deleteAccount();
+    } catch {
+      // Best-effort — the local session is cleared below regardless, so the
+      // user is signed out even if the server call failed transiently.
+    }
+    await clearTokens();
     resetLocalState();
   }, [resetLocalState]);
 
@@ -378,9 +541,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       finishOnboarding,
       user,
       updateUser,
+      saveProfile,
       goals,
       goalsSource,
       setGoals,
+      saveGoals,
       applyCalculatedGoals,
       applyBcaGoals,
       healthProvider,
@@ -388,7 +553,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       todayLog,
       addLogEntry,
       removeLogEntry,
+      refreshTodayLog,
       history,
+      loadDayEntries,
       reports,
       addReport,
       reanalysingIndex,
@@ -409,16 +576,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       finishOnboarding,
       user,
       updateUser,
+      saveProfile,
       goals,
       goalsSource,
       setGoals,
+      saveGoals,
       applyCalculatedGoals,
       applyBcaGoals,
       healthProvider,
       todayLog,
       addLogEntry,
       removeLogEntry,
+      refreshTodayLog,
       history,
+      loadDayEntries,
       reports,
       addReport,
       reanalysingIndex,

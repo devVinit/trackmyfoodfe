@@ -22,13 +22,19 @@ const ACTIVITY_SHORT_LABELS: Record<ActivityLevel, string> = {
 };
 
 export default function OnboardingConfirmGoalsScreen() {
-  const { goals, setGoals, goalsSource, user, advanceOnboarding } = useAppState();
+  const { goals, setGoals, saveGoals, goalsSource, user, advanceOnboarding } = useAppState();
 
   function setField(key: keyof Goals) {
     return (text: string) => setGoals({ ...goals, [key]: parseGoalNumber(text) });
   }
 
-  function handleContinue() {
+  async function handleContinue() {
+    try {
+      await saveGoals();
+    } catch {
+      // Best-effort — same rationale as advanceOnboarding: the goals stay in
+      // local state either way, and the profile tab lets them be re-saved.
+    }
     void advanceOnboarding(4);
     router.push('/onboarding-4');
   }

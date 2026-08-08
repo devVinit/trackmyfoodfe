@@ -1,5 +1,5 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Brand } from '@/constants/theme';
 
@@ -13,16 +13,21 @@ type Props = {
   c: number;
   fi: number;
   gradient: readonly [string, string];
+  photoUrl?: string | null;
   onPress?: () => void;
 };
 
-export function LogEntryRow({ name, time, meal, cal, p, f, c, fi, gradient, onPress }: Props) {
+export function LogEntryRow({ name, time, meal, cal, p, f, c, fi, gradient, photoUrl, onPress }: Props) {
   const Wrapper = onPress ? Pressable : View;
   return (
     <Wrapper onPress={onPress} style={styles.row}>
-      <LinearGradient colors={gradient} style={styles.thumb}>
-        <View style={styles.thumbDot} />
-      </LinearGradient>
+      {photoUrl ? (
+        <Image source={{ uri: photoUrl }} style={styles.thumb} resizeMode="cover" />
+      ) : (
+        <LinearGradient colors={gradient} style={styles.thumb}>
+          <View style={styles.thumbDot} />
+        </LinearGradient>
+      )}
       <View style={styles.body}>
         <View style={styles.topLine}>
           <Text style={styles.name} numberOfLines={1}>

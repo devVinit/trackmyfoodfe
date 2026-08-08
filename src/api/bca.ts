@@ -1,6 +1,6 @@
 import { API_BASE_URL } from '@/constants/config';
 
-import { parseError } from './auth';
+import { parseError, request } from './auth';
 import { loadTokens } from './token-storage';
 
 export type BcaScanFile = {
@@ -15,6 +15,7 @@ export type BcaScanFile = {
 
 export type BcaScanResult = {
   report: {
+    id: number;
     report_date: string;
     weight_kg: number;
     body_fat_pct: number;
@@ -59,4 +60,29 @@ export async function scanBcaReport(
 
   if (!res.ok) throw await parseError(res);
   return (await res.json()) as BcaScanResult;
+}
+
+export type BcaReportListItem = {
+  id: number;
+  report_date: string;
+  weight_kg: number;
+  body_fat_pct: number;
+  muscle_mass_kg: number;
+  bmr_kcal: number;
+};
+
+export type BcaReanalyseResult = {
+  report: BcaReportListItem;
+  goals: BcaScanResult['goals'];
+};
+
+export async function listBcaReports(): Promise<BcaReportListItem[]> {
+  return request<BcaReportListItem[]>('/bca-reports', { method: 'GET', auth: true });
+}
+
+export async function reanalyseBcaReport(id: number): Promise<BcaReanalyseResult> {
+  return request<BcaReanalyseResult>(`/bca-reports/${id}/reanalyse`, {
+    method: 'POST',
+    auth: true,
+  });
 }

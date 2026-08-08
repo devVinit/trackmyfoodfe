@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { PrimaryButton } from '@/components/ui/primary-button';
@@ -26,17 +26,26 @@ export default function FoodDetailScreen() {
   }
 
   const entryId = entry.id;
-  function handleRemove() {
-    removeLogEntry(entryId);
-    showToast('Removed from log');
-    close();
+  async function handleRemove() {
+    try {
+      await removeLogEntry(entryId);
+      showToast('Removed from log');
+      close();
+    } catch {
+      // removeLogEntry already surfaced an error toast — stay open so the
+      // user can retry.
+    }
   }
 
   return (
     <BottomSheet onClose={close} scroll={false}>
-      <LinearGradient colors={entry.gradient} style={styles.photo}>
-        <Text style={styles.photoLabel}>food photo</Text>
-      </LinearGradient>
+      {entry.photoUrl ? (
+        <Image source={{ uri: entry.photoUrl }} style={styles.photo} resizeMode="cover" />
+      ) : (
+        <LinearGradient colors={entry.gradient} style={styles.photo}>
+          <Text style={styles.photoLabel}>food photo</Text>
+        </LinearGradient>
+      )}
 
       <View style={styles.headerRow}>
         <Text style={styles.name} numberOfLines={1}>

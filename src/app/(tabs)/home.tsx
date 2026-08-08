@@ -1,4 +1,5 @@
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -13,8 +14,16 @@ import { useTabBarMetrics } from '@/hooks/use-tab-bar-metrics';
 import { formatNumber, formatSignedNumber } from '@/utils/format';
 
 export default function HomeScreen() {
-  const { user, goals, todayLog, healthProvider } = useAppState();
+  const { user, goals, todayLog, healthProvider, refreshTodayLog } = useAppState();
   const tabBar = useTabBarMetrics();
+
+  // Re-fetch today's log whenever this tab regains focus — e.g. coming back
+  // from the scan modal after logging a meal, or after removing an entry.
+  useFocusEffect(
+    useCallback(() => {
+      void refreshTodayLog();
+    }, [refreshTodayLog]),
+  );
 
   const now = new Date();
   const todayLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -94,6 +103,7 @@ export default function HomeScreen() {
                 c={entry.c}
                 fi={entry.fi}
                 gradient={entry.gradient}
+                photoUrl={entry.photoUrl}
                 onPress={() => router.push({ pathname: '/food-detail', params: { id: entry.id } })}
               />
             ))}

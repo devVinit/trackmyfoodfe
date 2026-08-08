@@ -11,15 +11,7 @@ import { ProgressDots } from '@/components/ui/progress-dots';
 import { ShimmerBar } from '@/components/ui/shimmer-bar';
 import { TextButton } from '@/components/ui/text-button';
 import { Brand } from '@/constants/theme';
-import { useAppState } from '@/context/app-state';
-
-function formatReportDate(isoDate: string) {
-  return new Date(isoDate).toLocaleDateString('en-US', {
-    month: 'short',
-    day: '2-digit',
-    year: 'numeric',
-  });
-}
+import { goalsFromApi, reportFromApi, useAppState } from '@/context/app-state';
 
 export default function OnboardingBcaUploadScreen() {
   const { user, applyBcaGoals, applyCalculatedGoals, addReport, showToast, advanceOnboarding } =
@@ -45,20 +37,8 @@ export default function OnboardingBcaUploadScreen() {
         user.activity,
         user.gender,
       );
-      applyBcaGoals({
-        calories: scan.goals.calories,
-        protein: scan.goals.protein_g,
-        fat: scan.goals.fat_g,
-        carbs: scan.goals.carbs_g,
-        fiber: scan.goals.fiber_g,
-      });
-      addReport({
-        date: formatReportDate(scan.report.report_date),
-        weight: String(scan.report.weight_kg),
-        fat: scan.report.body_fat_pct.toFixed(1),
-        muscle: scan.report.muscle_mass_kg.toFixed(1),
-        bmr: scan.report.bmr_kcal.toLocaleString('en-US'),
-      });
+      applyBcaGoals(goalsFromApi(scan.goals));
+      addReport(reportFromApi(scan.report));
       void advanceOnboarding(3);
       router.push('/onboarding-3');
     } catch (err) {
@@ -70,7 +50,7 @@ export default function OnboardingBcaUploadScreen() {
   }
 
   function handleSkip() {
-    applyCalculatedGoals();
+    void applyCalculatedGoals();
     void advanceOnboarding(3);
     router.push('/onboarding-3');
   }

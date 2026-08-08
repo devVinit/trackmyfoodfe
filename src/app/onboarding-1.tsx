@@ -11,9 +11,16 @@ import { Brand } from '@/constants/theme';
 import { useAppState } from '@/context/app-state';
 
 export default function OnboardingPersonalInfoScreen() {
-  const { user, updateUser, advanceOnboarding } = useAppState();
+  const { user, updateUser, saveProfile, advanceOnboarding } = useAppState();
 
-  function handleContinue() {
+  async function handleContinue() {
+    try {
+      await saveProfile();
+    } catch {
+      // Best-effort — see advanceOnboarding's rationale below; the fields
+      // stay in local state either way, and the profile tab lets it be
+      // re-saved later.
+    }
     void advanceOnboarding(2);
     router.push('/onboarding-2');
   }

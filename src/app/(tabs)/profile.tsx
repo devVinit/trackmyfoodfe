@@ -4,6 +4,8 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { ApiError } from '@/api/auth';
+import { scanBcaReport } from '@/api/bca';
 import { AppBackground } from '@/components/ui/app-background';
 import { CenterDialog } from '@/components/ui/center-dialog';
 import { GenderToggle } from '@/components/ui/gender-toggle';
@@ -12,7 +14,7 @@ import { LabeledField } from '@/components/ui/labeled-field';
 import { PrimaryButton } from '@/components/ui/primary-button';
 import { TextField } from '@/components/ui/text-field';
 import { Brand } from '@/constants/theme';
-import { useAppState, type BcaReport, type Goals } from '@/context/app-state';
+import { goalsFromApi, reportFromApi, useAppState, type Goals } from '@/context/app-state';
 import { useTabBarMetrics } from '@/hooks/use-tab-bar-metrics';
 import { initialsOf } from '@/utils/format';
 
@@ -22,15 +24,60 @@ function parseGoalNumber(text: string) {
 }
 
 export default function ProfileScreen() {
-  const { user, updateUser, goals, setGoals, reports, addReport, reanalysingIndex, reanalyseReport, showToast, logout, deleteAccount } =
-    useAppState();
+  const {
+    user,
+    updateUser,
+    saveProfile,
+    goals,
+    setGoals,
+    saveGoals,
+    applyBcaGoals,
+    reports,
+    addReport,
+    reanalysingIndex,
+    reanalyseReport,
+    showToast,
+    logout,
+    deleteAccount,
+  } = useAppState();
   const [editingProfile, setEditingProfile] = useState(false);
   const [editingGoals, setEditingGoals] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingGoals, setSavingGoals] = useState(false);
+  const [uploadingReport, setUploadingReport] = useState(false);
   const tabBar = useTabBarMetrics();
 
   function setGoalField(key: keyof Goals) {
     return (text: string) => setGoals({ ...goals, [key]: parseGoalNumber(text) });
+  }
+
+  async function handleSaveProfile() {
+    setSavingProfile(true);
+    try {
+      await saveProfile();
+      setEditingProfile(false);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Could not save profile');
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function toggleEditingGoals() {
+    if (!editingGoals) {
+      setEditingGoals(true);
+      return;
+    }
+    setSavingGoals(true);
+    try {
+      await saveGoals();
+      setEditingGoals(false);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Could not save goals');
+    } finally {
+      setSavingGoals(false);
+    }
   }
 
   async function uploadReport() {
@@ -38,10 +85,23 @@ export default function ProfileScreen() {
       type: ['image/jpeg', 'image/png', 'application/pdf'],
     });
     if (result.canceled) return;
-    const today = new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
-    const report: BcaReport = { date: today, weight: user.weight || '70', fat: '17.8', muscle: '33.4', bmr: '1,662' };
-    addReport(report);
-    showToast('Report parsed by AI');
+    const asset = result.assets[0];
+
+    setUploadingReport(true);
+    try {
+      const scan = await scanBcaReport(
+        { uri: asset.uri, name: asset.name, mimeType: asset.mimeType ?? 'application/pdf', webFile: asset.file },
+        user.activity,
+        user.gender,
+      );
+      addReport(reportFromApi(scan.report));
+      applyBcaGoals(goalsFromApi(scan.goals));
+      showToast('Report parsed by AI');
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Could not read that file. Try again?');
+    } finally {
+      setUploadingReport(false);
+    }
   }
 
   function handleLogout() {
@@ -49,9 +109,9 @@ export default function ProfileScreen() {
     router.replace('/sign-in');
   }
 
-  function handleDeleteConfirm() {
+  async function handleDeleteConfirm() {
     setShowDelete(false);
-    deleteAccount();
+    await deleteAccount();
     showToast('Account deleted');
     router.replace('/sign-in');
   }
@@ -86,7 +146,9 @@ export default function ProfileScreen() {
                 <TextField value={user.weight} onChangeText={(v) => updateUser({ weight: v })} keyboardType="numeric" solid style={styles.flex} />
               </View>
               <GenderToggle value={user.gender} onChange={(g) => updateUser({ gender: g })} compact />
-              <PrimaryButton onPress={() => setEditingProfile(false)}>Save changes</PrimaryButton>
+              <PrimaryButton onPress={handleSaveProfile} loading={savingProfile}>
+                Save changes
+              </PrimaryButton>
             </View>
           )}
         </GlassCard>
@@ -96,8 +158,11 @@ export default function ProfileScreen() {
             <Text style={styles.sectionLabel}>Daily goals</Text>
             <Pressable
               style={editingGoals ? styles.donePill : styles.editPill}
-              onPress={() => setEditingGoals((v) => !v)}>
-              <Text style={editingGoals ? styles.donePillText : styles.editPillText}>{editingGoals ? 'Done' : 'Edit'}</Text>
+              onPress={toggleEditingGoals}
+              disabled={savingGoals}>
+              <Text style={editingGoals ? styles.donePillText : styles.editPillText}>
+                {savingGoals ? 'Saving…' : editingGoals ? 'Done' : 'Edit'}
+              </Text>
             </Pressable>
           </View>
 
@@ -122,13 +187,13 @@ export default function ProfileScreen() {
 
         <View style={styles.reportsHeader}>
           <Text style={styles.logTitle}>BCA reports</Text>
-          <Pressable style={styles.uploadPill} onPress={uploadReport}>
-            <Text style={styles.uploadPillText}>+ Upload new</Text>
+          <Pressable style={styles.uploadPill} onPress={uploadReport} disabled={uploadingReport}>
+            <Text style={styles.uploadPillText}>{uploadingReport ? 'Parsing with AI…' : '+ Upload new'}</Text>
           </Pressable>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.reportsScroll}>
           {reports.map((r, i) => (
-            <View key={r.date + i} style={styles.reportCard}>
+            <View key={r.id} style={styles.reportCard}>
               <View style={styles.reportTop}>
                 <Text style={styles.reportDate}>{r.date}</Text>
                 <View style={styles.parsedChip}>

@@ -1,9 +1,11 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
+import { ApiError } from '@/api/auth';
+import { scanFoodPhoto, type ScannedFoodItem } from '@/api/food-logs';
 import { BottomSheet } from '@/components/ui/bottom-sheet';
 import { PillChip } from '@/components/ui/pill-chip';
 import { PrimaryButton } from '@/components/ui/primary-button';
@@ -12,77 +14,106 @@ import { Brand } from '@/constants/theme';
 import { useAppState, type Meal } from '@/context/app-state';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-type CamState = 'idle' | 'analyzing' | 'questions' | 'result';
+type CamState = 'idle' | 'analyzing' | 'result';
 
 const MEALS: Meal[] = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
 
-const INITIAL_QUESTIONS = [
-  { text: "What's the base?", options: ['White rice', 'Brown rice', 'Quinoa'] },
-  { text: 'Any dressing or sauce?', options: ['Soy-mayo', 'Ponzu', 'None'] },
-];
-
-const INITIAL_SCAN = {
-  name: 'Salmon poke bowl',
-  serving: '420',
-  calories: '585',
-  protein: '38',
-  fat: '19',
-  carbs: '62',
-  fiber: '6',
-  meal: 'Lunch' as Meal,
+type ScanForm = {
+  name: string;
+  serving: string;
+  calories: string;
+  protein: string;
+  fat: string;
+  carbs: string;
+  fiber: string;
+  meal: Meal;
 };
+
+const EMPTY_SCAN: ScanForm = {
+  name: '',
+  serving: '',
+  calories: '',
+  protein: '',
+  fat: '',
+  carbs: '',
+  fiber: '',
+  meal: 'Lunch',
+};
+
+function defaultMealForNow(): Meal {
+  const hour = new Date().getHours();
+  if (hour < 11) return 'Breakfast';
+  if (hour < 16) return 'Lunch';
+  if (hour < 19) return 'Snack';
+  return 'Dinner';
+}
 
 export default function ScanScreen() {
   const insets = useSafeAreaInsets();
   const { addLogEntry, showToast } = useAppState();
   const [permission, requestPermission] = useCameraPermissions();
   const [state, setState] = useState<CamState>('idle');
-  const [answers, setAnswers] = useState<(string | null)[]>(INITIAL_QUESTIONS.map(() => null));
-  const [scan, setScan] = useState(INITIAL_SCAN);
-  const [confidence, setConfidence] = useState(86);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [scan, setScan] = useState<ScanForm>(EMPTY_SCAN);
+  const [items, setItems] = useState<ScannedFoodItem[]>([]);
+  const [photoKey, setPhotoKey] = useState<string | undefined>(undefined);
+  const cameraRef = useRef<CameraView>(null);
 
   useEffect(() => {
     if (!permission) requestPermission();
   }, [permission, requestPermission]);
 
-  useEffect(() => () => {
-    if (timer.current) clearTimeout(timer.current);
-  }, []);
-
   function close() {
-    if (timer.current) clearTimeout(timer.current);
     router.back();
   }
 
-  function shoot() {
+  async function shoot() {
+    if (!cameraRef.current || !cameraReady) return;
     setState('analyzing');
-    timer.current = setTimeout(() => setState('questions'), 1700);
+    try {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.6 });
+      if (!photo) throw new Error('capture-failed');
+      const result = await scanFoodPhoto({ uri: photo.uri, format: photo.format });
+      setScan({
+        name: result.name,
+        serving: String(result.serving_g),
+        calories: String(result.calories),
+        protein: String(result.protein_g),
+        fat: String(result.fat_g),
+        carbs: String(result.carbs_g),
+        fiber: String(result.fiber_g),
+        meal: defaultMealForNow(),
+      });
+      setItems(result.items);
+      setPhotoKey(result.photo_key);
+      setState('result');
+      if (result.unmatched_warning) showToast(result.unmatched_warning);
+    } catch (err) {
+      showToast(err instanceof ApiError ? err.message : 'Could not analyze that photo. Try again?');
+      setState('idle');
+    }
   }
 
-  function pickAnswer(index: number, option: string) {
-    setAnswers((prev) => prev.map((a, i) => (i === index ? option : a)));
-  }
-
-  function continueToResult() {
-    const answered = answers.every((a) => a !== null);
-    setConfidence(answered ? 93 : 86);
-    setState('result');
-  }
-
-  function logFood() {
-    addLogEntry({
-      name: scan.name || 'Meal',
-      meal: scan.meal,
-      time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
-      cal: parseInt(scan.calories, 10) || 0,
-      p: parseInt(scan.protein, 10) || 0,
-      f: parseInt(scan.fat, 10) || 0,
-      c: parseInt(scan.carbs, 10) || 0,
-      fi: parseInt(scan.fiber, 10) || 0,
-    });
-    showToast(`Logged · +${parseInt(scan.calories, 10) || 0} kcal`);
-    router.replace('/(tabs)/home');
+  async function logFood() {
+    const cal = parseInt(scan.calories, 10) || 0;
+    try {
+      await addLogEntry({
+        name: scan.name || 'Meal',
+        meal: scan.meal,
+        time: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
+        cal,
+        p: parseInt(scan.protein, 10) || 0,
+        f: parseInt(scan.fat, 10) || 0,
+        c: parseInt(scan.carbs, 10) || 0,
+        fi: parseInt(scan.fiber, 10) || 0,
+        photoKey,
+      });
+      showToast(`Logged · +${cal} kcal`);
+      router.back();
+    } catch {
+      // addLogEntry already surfaced an error toast — stay on this screen so
+      // the user can retry without re-entering everything.
+    }
   }
 
   return (
@@ -96,7 +127,12 @@ export default function ScanScreen() {
 
       <View style={styles.viewfinder}>
         {permission?.granted ? (
-          <CameraView style={StyleSheet.absoluteFill} facing="back" />
+          <CameraView
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            facing="back"
+            onCameraReady={() => setCameraReady(true)}
+          />
         ) : (
           <View style={styles.viewfinderPlaceholder}>
             <Text style={styles.viewfinderPlaceholderText}>
@@ -114,7 +150,12 @@ export default function ScanScreen() {
       {state === 'idle' ? (
         <View style={styles.idleControls}>
           <Text style={styles.idleHint}>Center your plate in the frame</Text>
-          <Pressable style={styles.shutter} onPress={shoot} accessibilityRole="button" accessibilityLabel="Capture photo">
+          <Pressable
+            style={[styles.shutter, !cameraReady && styles.shutterDisabled]}
+            onPress={shoot}
+            disabled={!cameraReady}
+            accessibilityRole="button"
+            accessibilityLabel="Capture photo">
             <View style={styles.shutterInner} />
           </Pressable>
         </View>
@@ -123,58 +164,36 @@ export default function ScanScreen() {
       {state === 'analyzing' ? (
         <View style={styles.analyzingControls}>
           <Text style={styles.analyzingTitle}>Analyzing with AI…</Text>
-          <Text style={styles.analyzingSubtitle}>Identifying food and estimating macros</Text>
+          <Text style={styles.analyzingSubtitle}>Identifying food and portion sizes</Text>
         </View>
-      ) : null}
-
-      {state === 'questions' ? (
-        <BottomSheet onClose={close} maxHeightPct={0.78}>
-          <View style={styles.questionsHeaderRow}>
-            <View style={styles.aiBadge}>
-              <Text style={styles.aiBadgeText}>AI</Text>
-            </View>
-            <Text style={styles.questionsTitle}>Looks like {scan.name}</Text>
-          </View>
-          <Text style={styles.questionsCaption}>
-            A couple of details will make the macro estimate more accurate.
-          </Text>
-
-          <View style={styles.questionsList}>
-            {INITIAL_QUESTIONS.map((q, qi) => (
-              <View key={q.text} style={styles.questionBlock}>
-                <Text style={styles.questionText}>{q.text}</Text>
-                <View style={styles.optionRow}>
-                  {q.options.map((option) => (
-                    <PillChip
-                      key={option}
-                      label={option}
-                      active={answers[qi] === option}
-                      onPress={() => pickAnswer(qi, option)}
-                    />
-                  ))}
-                </View>
-              </View>
-            ))}
-          </View>
-
-          <PrimaryButton onPress={continueToResult}>Estimate macros</PrimaryButton>
-        </BottomSheet>
       ) : null}
 
       {state === 'result' ? (
         <BottomSheet onClose={close} maxHeightPct={0.78}>
-          <View style={styles.resultHeaderRow}>
-            <TextField
-              value={scan.name}
-              onChangeText={(v) => setScan((s) => ({ ...s, name: v }))}
-              fontSize={21}
-              fontWeight="800"
-              style={styles.resultNameField}
-            />
-            <View style={styles.confidenceChip}>
-              <Text style={styles.confidenceChipText}>{confidence}% confident</Text>
+          <TextField
+            value={scan.name}
+            onChangeText={(v) => setScan((s) => ({ ...s, name: v }))}
+            fontSize={21}
+            fontWeight="800"
+            style={styles.resultNameField}
+          />
+
+          {items.length > 0 ? (
+            <View style={styles.itemsList}>
+              {items.map((item, i) => (
+                <View key={`${item.name}-${i}`} style={styles.itemRow}>
+                  <Text style={styles.itemName} numberOfLines={1}>
+                    {item.name} · {item.estimated_weight_g}g
+                  </Text>
+                  {item.matched ? (
+                    <Text style={styles.itemConfidence}>{Math.round(item.confidence * 100)}% confident</Text>
+                  ) : (
+                    <Text style={styles.itemUnmatched}>no nutrition data</Text>
+                  )}
+                </View>
+              ))}
             </View>
-          </View>
+          ) : null}
 
           <View style={styles.mealChipsRow}>
             {MEALS.map((meal) => (
@@ -333,6 +352,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  shutterDisabled: {
+    opacity: 0.4,
+  },
   shutterInner: {
     width: 56,
     height: 56,
@@ -356,75 +378,41 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  questionsHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    marginBottom: 6,
-  },
-  aiBadge: {
-    backgroundColor: Brand.primaryTint,
-    borderRadius: 100,
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-  },
-  aiBadgeText: {
-    color: Brand.accent,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.5,
-  },
-  questionsTitle: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: Brand.text,
-    flexShrink: 1,
-  },
-  questionsCaption: {
-    fontSize: 13.5,
-    color: Brand.textSecondary,
-    lineHeight: 19,
-    marginBottom: 18,
-  },
-  questionsList: {
-    gap: 16,
-    marginBottom: 20,
-  },
-  questionBlock: {
-    gap: 9,
-  },
-  questionText: {
-    fontSize: 14.5,
-    fontWeight: '700',
-    color: Brand.text,
-  },
-  optionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  resultHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 14,
-  },
   resultNameField: {
-    flex: 1,
     borderWidth: 0,
     backgroundColor: 'transparent',
     paddingHorizontal: 0,
+    marginBottom: 10,
   },
-  confidenceChip: {
-    backgroundColor: Brand.successTint,
-    borderRadius: 100,
-    paddingVertical: 4,
-    paddingHorizontal: 10,
+  itemsList: {
+    gap: 6,
+    marginBottom: 16,
   },
-  confidenceChipText: {
+  itemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  itemName: {
+    flex: 1,
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: Brand.text,
+  },
+  itemConfidence: {
     fontSize: 11.5,
     fontWeight: '700',
     color: Brand.success,
+  },
+  itemUnmatched: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: Brand.danger,
   },
   mealChipsRow: {
     flexDirection: 'row',

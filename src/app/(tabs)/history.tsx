@@ -17,8 +17,15 @@ export default function HistoryScreen() {
         <Text style={styles.title}>History</Text>
         <Text style={styles.subtitle}>Your last days at a glance</Text>
 
+        {history.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No days logged yet</Text>
+            <Text style={styles.emptyBody}>Once you log a few meals, your daily totals will show up here.</Text>
+          </View>
+        ) : null}
+
         <View style={styles.list}>
-          {history.map((day, index) => {
+          {history.map((day) => {
             const ratio = day.cal / (goals.calories || 1);
             const over = ratio > 1.03;
             const under = ratio < 0.85;
@@ -30,8 +37,8 @@ export default function HistoryScreen() {
 
             return (
               <Pressable
-                key={day.date}
-                onPress={() => router.push({ pathname: '/day-detail', params: { index: String(index) } })}
+                key={day.isoDate}
+                onPress={() => router.push({ pathname: '/day-detail', params: { date: day.isoDate } })}
                 style={styles.card}>
                 <View style={styles.cardTop}>
                   <Text style={styles.cardDate}>{day.date}</Text>
@@ -77,6 +84,28 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Brand.textSecondary,
     marginBottom: 18,
+  },
+  emptyState: {
+    backgroundColor: 'rgba(255,255,255,0.45)',
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: 'rgba(180,167,143,0.45)',
+    borderRadius: 20,
+    paddingVertical: 34,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Brand.textSecondary,
+  },
+  emptyBody: {
+    fontSize: 13.5,
+    color: Brand.textMuted,
+    textAlign: 'center',
+    lineHeight: 19,
   },
   list: {
     gap: 10,
