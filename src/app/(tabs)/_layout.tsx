@@ -118,12 +118,12 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   barClip: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 34,
     overflow: 'hidden',
   },
   barBorder: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 34,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.72)',

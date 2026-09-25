@@ -1,3 +1,4 @@
+import { File } from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import { API_BASE_URL } from '@/constants/config';
@@ -123,19 +124,37 @@ export async function scanFoodPhoto(photo: FoodScanPhoto): Promise<FoodScanResul
     const blob = await dataUriRes.blob();
     form.append('file', blob, filename);
   } else {
-    // RN's FormData accepts this {uri, name, type} shape for file parts — it
-    // isn't a real Blob, hence the cast.
-    form.append('file', { uri: photo.uri, name: filename, type: contentType } as unknown as Blob);
+    // The global fetch is expo/fetch (SDK 57), which rejects RN's legacy
+    // {uri, name, type} part ("Unsupported FormDataPart implementation").
+    // expo-file-system's File implements Blob, so it serializes directly.
+    const file = new File(photo.uri);
+    console.log('[scan] attaching file', { name: file.name, type: file.type, size: file.size });
+    form.append('file', file, filename);
   }
 
   // No Content-Type header here — fetch sets the multipart boundary itself
   // when given a FormData body; forcing one breaks the boundary.
-  const res = await fetch(`${API_BASE_URL}/food-logs/scan`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${tokens.accessToken}` },
-    body: form,
-  });
+  const url = `${API_BASE_URL}/food-logs/scan`;
+  console.log('[scan] uploading', { url, platform: Platform.OS, contentType });
+  const started = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokens.accessToken}` },
+      body: form,
+    });
+  } catch (err) {
+    // Thrown before any response — backend unreachable, wrong IP, CORS, etc.
+    console.error('[scan] network error', { url, ms: Date.now() - started, err });
+    throw err;
+  }
+  console.log('[scan] response', { status: res.status, ms: Date.now() - started });
 
-  if (!res.ok) throw await parseError(res);
+  if (!res.ok) {
+    // clone() so parseError can still read the body after we log it.
+    console.error('[scan] error body', res.status, await res.clone().text());
+    throw await parseError(res);
+  }
   return (await res.json()) as FoodScanResult;
 }

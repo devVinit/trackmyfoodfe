@@ -14,7 +14,10 @@ export default function DayDetailScreen() {
   const { date } = useLocalSearchParams<{ date: string }>();
   const day = history.find((d) => d.isoDate === date);
 
-  const [meals, setMeals] = useState<LogEntry[] | null>(null);
+  // Tagged with the date they belong to, so switching days shows the spinner
+  // instead of the previous day's meals.
+  const [loaded, setLoaded] = useState<{ date: string; entries: LogEntry[] } | null>(null);
+  const meals = loaded?.date === date ? loaded.entries : null;
 
   function close() {
     router.back();
@@ -23,13 +26,12 @@ export default function DayDetailScreen() {
   useEffect(() => {
     if (!day || !date) return;
     let cancelled = false;
-    setMeals(null);
     loadDayEntries(date)
       .then((entries) => {
-        if (!cancelled) setMeals(entries);
+        if (!cancelled) setLoaded({ date, entries });
       })
       .catch(() => {
-        if (!cancelled) setMeals([]);
+        if (!cancelled) setLoaded({ date, entries: [] });
       });
     return () => {
       cancelled = true;

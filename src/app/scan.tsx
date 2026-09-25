@@ -68,12 +68,28 @@ export default function ScanScreen() {
   }
 
   async function shoot() {
-    if (!cameraRef.current || !cameraReady) return;
+    console.log('[scan] shutter pressed', { hasCameraRef: !!cameraRef.current, cameraReady });
+    if (!cameraRef.current || !cameraReady) {
+      console.warn('[scan] ignoring shutter — camera not ready');
+      return;
+    }
     setState('analyzing');
     try {
       const photo = await cameraRef.current.takePictureAsync({ quality: 0.6 });
       if (!photo) throw new Error('capture-failed');
+      console.log('[scan] photo captured', {
+        uri: photo.uri.slice(0, 80),
+        format: photo.format,
+        width: photo.width,
+        height: photo.height,
+      });
       const result = await scanFoodPhoto({ uri: photo.uri, format: photo.format });
+      console.log('[scan] analysis result', {
+        name: result.name,
+        calories: result.calories,
+        items: result.items.map((i) => `${i.name} (${i.matched ? 'matched' : 'unmatched'})`),
+        unmatchedWarning: result.unmatched_warning,
+      });
       setScan({
         name: result.name,
         serving: String(result.serving_g),
@@ -89,6 +105,10 @@ export default function ScanScreen() {
       setState('result');
       if (result.unmatched_warning) showToast(result.unmatched_warning);
     } catch (err) {
+      console.error(
+        '[scan] scan failed',
+        err instanceof ApiError ? { status: err.status, message: err.message } : err,
+      );
       showToast(err instanceof ApiError ? err.message : 'Could not analyze that photo. Try again?');
       setState('idle');
     }
@@ -131,7 +151,11 @@ export default function ScanScreen() {
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             facing="back"
-            onCameraReady={() => setCameraReady(true)}
+            onCameraReady={() => {
+              console.log('[scan] camera ready');
+              setCameraReady(true);
+            }}
+            onMountError={(e) => console.error('[scan] camera mount error', e.message)}
           />
         ) : (
           <View style={styles.viewfinderPlaceholder}>
